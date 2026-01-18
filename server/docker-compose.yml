@@ -1,0 +1,140 @@
+networks:
+  proxy:
+    external: true
+  containers:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+services:
+  nginx:
+    image: nginxproxy/nginx-proxy
+    depends_on:
+      - wireguard
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - $PWD/containers/nginx/certs:/etc/nginx/certs
+      - $PWD/containers/nginx/html:/usr/share/nginx/html
+      - $PWD/containers/nginx/sock:/tmp/docker.sock:ro
+    ports:
+      - 80:80
+      - 443:443
+    restart: unless-stopped
+    networks:
+      containers:
+        ipv4_address: 172.20.0.2
+
+  nginx-acme:
+    image: nginxproxy/acme-companion
+    depends_on:
+      - nginx
+    env_file:
+    - $PWD/nginx-acme.env
+    restart: unless-stopped
+
+  wireguard:
+    image: linuxserver/wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    env_file:
+      - $PWD/wireguard.env
+    volumes:
+      - $PWD/containers/wireguard/config:/config
+      - $PWD/containers/wireguard/lib/modules:/lib/modules
+      - $PWD/containers/wireguard/usr/src:/usr/src
+    ports:
+      - 51820:51820/udp
+    dns:
+      - 172.20.0.4
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+    networks:
+      containers:
+        ipv4_address: 172.20.0.3
+
+  pihole:
+    image: pihole/pihole:latest
+    cap_add:
+      - NET_ADMIN
+    expose:
+      - 53
+      - 80
+      - 443
+    env_file:
+      - $PWD/pihole.env
+    volumes:
+      - $PWD/containers/pihole/:/etc/pihole/
+    restart: unless-stopped
+    networks:
+      containers:
+        ipv4_address: 172.20.0.4
+
+  searxng:
+    image: searxng/searxng
+    env_file:
+      - $PWD/searxng.env
+    restart: unless-stopped
+    network_mode: service:wireguard
+    networks:
+      containers:
+        ipv4_address: 172.20.0.5
+
+  kiwix:
+    image: ghcr.io/kiwix/kiwix-serve:latest
+    expose:
+      - 8080
+    env_file:
+      - $PWD/kiwix.env
+    volumes:
+      - type: bind
+        source: ${KIWIX_SOURCE}
+        target: /data
+        read_only: true
+    restart: unless-stopped
+    command:
+      - '*.zim'
+    network_mode: service:wireguard
+    networks:
+      containers:
+        ipv4_address: 172.20.0.6
+
+  jellyfin:
+    image: jellyfin/jellyfin
+    env_file:
+      - $PWD/jellyfin.env
+    volumes:
+      - $PWD/containers/jellyfin/config:/config
+      - $PWD/containers/jellyfin/cache:/cache
+      - type: bind
+        source: $JELLYFIN_SOURCE
+        target: /media
+        read_only: true
+    restart: unless-stopped
+    network_mode: service:wireguard
+    networks:
+      containers:
+        ipv4_address: 172.20.0.7
+
+  arm:
+    image: automaticrippingmachine/automatic-ripping-machine:latest
+    container_name: arm
+    env_file:
+      - $PWD/arm.env
+    ports:
+      - 8080:80
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - $ARM_DISC_DEVICE:/dev/sr0
+    volumes:
+      - $PWD/containers/arm/config:/config
+      - $ARM_OUTPUT_DIR:/data
+      - $PWD/containers/arm/logs:/logs
+    shm_size: 1gb
+    networks:
+      containers:
+        ipv4_address: 172.20.0.8
